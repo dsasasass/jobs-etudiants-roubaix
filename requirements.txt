@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 httpx
-anthropic
+google-genai
 reportlab
 python-dotenv

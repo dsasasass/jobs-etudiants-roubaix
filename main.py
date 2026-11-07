@@ -2,7 +2,8 @@ import os, io, json, time, sqlite3, smtplib
 from datetime import date
 from email.message import EmailMessage
 import httpx
-from anthropic import Anthropic
+from google import genai
+from google.genai import errors, types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -90,6 +91,9 @@ def adapter(o: Offre):
     cv = kv_get("cv")
     if not cv:
         raise HTTPException(400, "Enregistre d'abord ton CV dans l'onglet Profil.")
+    api_key = E("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Configure GEMINI_API_KEY dans le fichier .env pour adapter ton CV.")
     prompt = f"""Tu aides un étudiant à candidater à un job étudiant en France.
 CV de référence :
 {cv}
@@ -100,9 +104,23 @@ Offre : {o.titre} chez {o.entreprise}
 Règles : n'invente AUCUNE expérience, diplôme ou compétence absents du CV. Reformule et réordonne le CV pour mettre en avant ce qui correspond à l'offre (une page max).
 Rédige une lettre de motivation courte (150-200 mots), sincère, en français, signée {kv_get('nom')}.
 Réponds uniquement en JSON : {{"cv": "texte du CV adapté", "lettre": "texte de la lettre"}}"""
-    m = Anthropic().messages.create(model=E("CLAUDE_MODEL", "claude-sonnet-5-5"), max_tokens=2500,
-                                    messages=[{"role": "user", "content": prompt}])
-    txt = m.content[0].text.strip().removeprefix("```json").removesuffix("```").strip()
+    try:
+        response = genai.Client(api_key=api_key).models.generate_content(
+            model=E("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=2500,
+                response_mime_type="application/json",
+            ),
+        )
+    except errors.APIError as ex:
+        raise HTTPException(
+            502,
+            f"Erreur Gemini (HTTP {ex.code}). Vérifie GEMINI_API_KEY, GEMINI_MODEL et le quota de l'API.",
+        ) from ex
+    if not response.text:
+        raise HTTPException(502, "Gemini n'a pas renvoyé de texte. Relance la génération.")
+    txt = response.text.strip()
     try:
         return json.loads(txt)
     except ValueError:
