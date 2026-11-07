@@ -42,16 +42,15 @@ document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{document.query
 async function chercher(){const l=$("#liste");l.className="msg";l.textContent="Recherche…";
 try{OFFRES=await api(`/api/offres?q=${encodeURIComponent($("#q").value)}&distance=${$("#d").value}`);
 if(!OFFRES.length){l.textContent="Aucune offre trouvée. Essaie d'autres mots-clés (serveur, vente, livraison, animateur) ou un rayon plus large.";return}
-l.className="";l.innerHTML=OFFRES.map((o,i)=>`<div class="offre"><div><h3>${esc(o.titre)}</h3><small>${esc(o.entreprise||"Entreprise non précisée")} · ${esc(o.lieu)} · ${esc(o.contrat)} · ${o.date}</small>${o.email?' <small class="tag">candidature par e-mail possible</small>':""}</div><button class="btn" onclick="preparer(${i})">Préparer ma candidature</button></div>`).join("")}
+l.className="";l.innerHTML=OFFRES.map((o,i)=>`<div class="offre"><div><h3>${esc(o.titre)}</h3><small>${esc(o.entreprise||"Entreprise non précisée")} · ${esc(o.lieu)} · ${esc(o.contrat)} · ${o.date}</small></div><button class="btn" onclick="preparer(${i})">Préparer ma candidature</button></div>`).join("")}
 catch(e){l.className="msg err";l.textContent=e.message}}
 $("#go").onclick=chercher;$("#q").onkeydown=e=>e.key=="Enter"&&chercher();
 async function preparer(i){const o=OFFRES[i];$("#dt").textContent=o.titre+(o.entreprise?" – "+o.entreprise:"");
 $("#dstate").hidden=false;$("#dstate").className="msg";$("#dstate").textContent="Adaptation de ton CV et de la lettre…";$("#dcols").hidden=$("#dact").hidden=true;dlg.showModal();
 try{const r=await post("/api/adapter",{titre:o.titre,entreprise:o.entreprise,description:o.description});
-$("#dcv").value=r.cv;$("#dlt").value=r.lettre;$("#dstate").hidden=false;$("#dstate").textContent="Relis et corrige avant d'envoyer.";$("#dcols").hidden=$("#dact").hidden=false;
+$("#dcv").value=r.cv;$("#dlt").value=r.lettre;$("#dstate").hidden=false;$("#dstate").textContent="Relis et corrige, puis ouvre l'offre pour postuler.";$("#dcols").hidden=$("#dact").hidden=false;
 const a=$("#dact");a.innerHTML="";const add=(t,f,alt)=>{const b=document.createElement("button");b.className="btn"+(alt?" alt":"");b.textContent=t;b.onclick=f;a.append(b)};
-if(o.email)add("Envoyer à "+o.email,async e=>{e.target.disabled=true;try{await post("/api/envoyer",{offre_id:o.id,titre:o.titre,entreprise:o.entreprise,email:o.email,cv:$("#dcv").value,lettre:$("#dlt").value});$("#dstate").textContent="Candidature envoyée.";}catch(x){$("#dstate").className="msg err";$("#dstate").textContent=x.message;e.target.disabled=false}});
-if(o.url)add("Ouvrir l'offre pour postuler",()=>window.open(o.url,"_blank"),!!o.email);
+if(o.url)add("Ouvrir l'offre pour postuler",()=>window.open(o.url,"_blank"));
 add("Marquer comme postulée",async()=>{await post("/api/candidatures",{offre_id:o.id,titre:o.titre,entreprise:o.entreprise});$("#dstate").textContent="Ajoutée à tes candidatures."},true)}
 catch(e){$("#dstate").className="msg err";$("#dstate").textContent=e.message}}
 async function suivi(){const l=await api("/api/candidatures");$("#tab").innerHTML=l.length?`<table><tr><th>Date</th><th>Offre</th><th>Entreprise</th><th>Statut</th></tr>${l.map(c=>`<tr><td>${c.jour}</td><td>${esc(c.titre)}</td><td>${esc(c.entreprise)}</td><td>${esc(c.statut)}</td></tr>`).join("")}</table>`:'<p class="msg">Aucune candidature pour le moment.</p>'}

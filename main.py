@@ -1,18 +1,15 @@
-import os, io, json, time, sqlite3, smtplib
+import json
+import os
+import sqlite3
 from datetime import date
-from email.message import EmailMessage
+
 import httpx
-from google import genai
-from google.genai import errors, types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from google import genai
+from google.genai import errors, types
 from pydantic import BaseModel
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-from xml.sax.saxutils import escape
 
 load_dotenv()
 E = os.environ.get
@@ -20,22 +17,7 @@ app = FastAPI(title="Jobs étudiants Roubaix")
 db = sqlite3.connect("data.db", check_same_thread=False)
 db.execute("create table if not exists kv(k text primary key, v text)")
 db.execute("create table if not exists cand(id integer primary key, offre_id text, titre text, entreprise text, statut text, jour text)")
-FT_AUTH = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
-FT_API = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
-ROUBAIX = "59512"  # code INSEE
-_tok = {"v": None, "exp": 0}
-
-
-def token():
-    if time.time() < _tok["exp"]:
-        return _tok["v"]
-    r = httpx.post(FT_AUTH, data={"grant_type": "client_credentials", "client_id": E("FT_CLIENT_ID"),
-                   "client_secret": E("FT_CLIENT_SECRET"), "scope": "api_offresdemploi_v2 o2dsoffre"})
-    if r.status_code != 200:
-        raise HTTPException(502, "Connexion France Travail refusée : vérifie FT_CLIENT_ID et FT_CLIENT_SECRET dans .env")
-    j = r.json()
-    _tok.update(v=j["access_token"], exp=time.time() + j["expires_in"] - 30)
-    return _tok["v"]
+ADZUNA_API = "https://api.adzuna.com/v1/api/jobs/fr/search/1"
 
 
 def kv_get(k, default=""):
@@ -45,20 +27,58 @@ def kv_get(k, default=""):
 
 @app.get("/api/offres")
 def offres(q: str = "étudiant", distance: int = 15):
-    r = httpx.get(FT_API, headers={"Authorization": f"Bearer {token()}"}, timeout=30,
-                  params={"commune": ROUBAIX, "distance": distance, "motsCles": q, "range": "0-49"})
-    if r.status_code in (204, 206) and not r.content:
-        return []
+    app_id, app_key = E("ADZUNA_APP_ID"), E("ADZUNA_APP_KEY")
+    if not app_id or not app_key:
+        raise HTTPException(503, "Configure ADZUNA_APP_ID et ADZUNA_APP_KEY dans le fichier .env.")
+    if not 1 <= distance <= 30:
+        raise HTTPException(422, "Le rayon doit être compris entre 1 et 30 km.")
+    try:
+        response = httpx.get(
+            ADZUNA_API,
+            params={
+                "app_id": app_id,
+                "app_key": app_key,
+                "results_per_page": 50,
+                "what": q,
+                "where": "Roubaix",
+                "distance": distance,
+                "sort_by": "date",
+                "content-type": "application/json",
+            },
+            timeout=30,
+        )
+    except httpx.HTTPError as ex:
+        raise HTTPException(502, "Connexion à Adzuna impossible. Réessaie dans quelques instants.") from ex
+    if response.status_code != 200:
+        raise HTTPException(
+            502,
+            f"Adzuna a refusé la recherche (HTTP {response.status_code}). Vérifie tes identifiants et ton quota.",
+        )
+    try:
+        payload = response.json()
+    except ValueError as ex:
+        raise HTTPException(502, "Réponse Adzuna illisible. Réessaie dans quelques instants.") from ex
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise HTTPException(502, "La réponse Adzuna ne contient pas la liste des offres attendue.")
+
     out = []
-    for o in r.json().get("resultats", []):
-        c = o.get("contact") or {}
-        mail = c.get("courriel") or ""
-        if "@" not in mail:
-            mail = next((w for w in (c.get("coordonnees1") or "").split() if "@" in w), "")
-        out.append({"id": o["id"], "titre": o.get("intitule", ""), "entreprise": (o.get("entreprise") or {}).get("nom", ""),
-                    "lieu": (o.get("lieuTravail") or {}).get("libelle", ""), "contrat": o.get("typeContratLibelle", ""),
-                    "date": (o.get("dateCreation") or "")[:10], "description": o.get("description", ""),
-                    "url": (o.get("origineOffre") or {}).get("urlOrigine", ""), "email": mail.strip("<>.,;")})
+    for offer in payload["results"]:
+        if not isinstance(offer, dict):
+            raise HTTPException(502, "Adzuna a renvoyé une offre au format inattendu.")
+        company = offer.get("company") or {}
+        location = offer.get("location") or {}
+        contract = offer.get("contract_time") or offer.get("contract_type") or ""
+        created = offer.get("created") or ""
+        out.append({
+            "id": str(offer.get("id", "")),
+            "titre": offer.get("title", ""),
+            "entreprise": company.get("display_name", "") if isinstance(company, dict) else "",
+            "lieu": location.get("display_name", "") if isinstance(location, dict) else "",
+            "contrat": contract.replace("_", " ") if isinstance(contract, str) else "",
+            "date": created[:10] if isinstance(created, str) else "",
+            "description": offer.get("description", ""),
+            "url": offer.get("redirect_url", ""),
+        })
     return out
 
 
@@ -120,43 +140,10 @@ Réponds uniquement en JSON : {{"cv": "texte du CV adapté", "lettre": "texte de
         ) from ex
     if not response.text:
         raise HTTPException(502, "Gemini n'a pas renvoyé de texte. Relance la génération.")
-    txt = response.text.strip()
     try:
-        return json.loads(txt)
-    except ValueError:
-        raise HTTPException(502, "Réponse IA illisible, relance la génération.")
-
-
-def pdf(text, title):
-    buf, st = io.BytesIO(), getSampleStyleSheet()
-    doc = SimpleDocTemplate(buf, pagesize=A4, title=title, leftMargin=50, rightMargin=50, topMargin=50, bottomMargin=50)
-    doc.build([x for l in text.split("\n") for x in (Paragraph(escape(l) or "&nbsp;", st["BodyText"]), Spacer(1, 2))])
-    return buf.getvalue()
-
-
-class Envoi(BaseModel):
-    offre_id: str
-    titre: str
-    entreprise: str = ""
-    email: str
-    cv: str
-    lettre: str
-
-
-@app.post("/api/envoyer")
-def envoyer(e: Envoi):
-    nom = kv_get("nom")
-    msg = EmailMessage()
-    msg["Subject"], msg["From"], msg["To"] = f"Candidature : {e.titre} - {nom}", E("SMTP_USER"), e.email
-    msg.set_content(e.lettre)
-    msg.add_attachment(pdf(e.cv, "CV"), maintype="application", subtype="pdf", filename=f"CV_{nom.replace(' ', '_')}.pdf")
-    try:
-        with smtplib.SMTP_SSL(E("SMTP_HOST"), int(E("SMTP_PORT", "465"))) as s:
-            s.login(E("SMTP_USER"), E("SMTP_PASS"))
-            s.send_message(msg)
-    except Exception as ex:
-        raise HTTPException(502, f"Envoi impossible : {ex}")
-    return marquer(Suivi(offre_id=e.offre_id, titre=e.titre, entreprise=e.entreprise, statut="envoyée par e-mail"))
+        return json.loads(response.text.strip())
+    except ValueError as ex:
+        raise HTTPException(502, "Réponse IA illisible, relance la génération.") from ex
 
 
 class Suivi(BaseModel):
@@ -168,16 +155,20 @@ class Suivi(BaseModel):
 
 @app.post("/api/candidatures")
 def marquer(s: Suivi):
-    db.execute("insert into cand(offre_id,titre,entreprise,statut,jour) values(?,?,?,?,?)",
-               (s.offre_id, s.titre, s.entreprise, s.statut, date.today().isoformat()))
+    db.execute(
+        "insert into cand(offre_id,titre,entreprise,statut,jour) values(?,?,?,?,?)",
+        (s.offre_id, s.titre, s.entreprise, s.statut, date.today().isoformat()),
+    )
     db.commit()
     return {"ok": True}
 
 
 @app.get("/api/candidatures")
 def liste():
-    return [dict(zip(("id", "offre_id", "titre", "entreprise", "statut", "jour"), r))
-            for r in db.execute("select * from cand order by id desc")]
+    return [
+        dict(zip(("id", "offre_id", "titre", "entreprise", "statut", "jour"), r))
+        for r in db.execute("select * from cand order by id desc")
+    ]
 
 
 @app.get("/")
