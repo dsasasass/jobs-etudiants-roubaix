@@ -1,15 +1,21 @@
+from io import BytesIO
 import json
 import os
 import sqlite3
+from zipfile import BadZipFile, ZipFile
 from datetime import date
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel
+from pypdf import PdfReader
+from pypdf.errors import FileNotDecryptedError, PdfReadError
 
 load_dotenv()
 E = os.environ.get
@@ -18,6 +24,9 @@ db = sqlite3.connect("data.db", check_same_thread=False)
 db.execute("create table if not exists kv(k text primary key, v text)")
 db.execute("create table if not exists cand(id integer primary key, offre_id text, titre text, entreprise text, statut text, jour text)")
 ADZUNA_API = "https://api.adzuna.com/v1/api/jobs/fr/search/1"
+MAX_CV_BYTES = 5 * 1024 * 1024
+MAX_CV_CHARS = 100_000
+MAX_CV_PDF_PAGES = 30
 
 
 def kv_get(k, default=""):
@@ -98,6 +107,65 @@ def set_profil(p: Profil):
         db.execute("insert or replace into kv values(?,?)", (k, v))
     db.commit()
     return {"ok": True}
+
+
+@app.post("/api/profil/cv")
+async def importer_cv(file: UploadFile = File(...)):
+    extension = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if extension not in {"pdf", "docx", "txt"}:
+        raise HTTPException(415, "Format non pris en charge. Importe un fichier PDF, DOCX ou TXT.")
+
+    content = bytearray()
+    while chunk := await file.read(64 * 1024):
+        if len(content) + len(chunk) > MAX_CV_BYTES:
+            raise HTTPException(413, "Le fichier est trop volumineux. La limite est de 5 Mo.")
+        content.extend(chunk)
+    if not content:
+        raise HTTPException(400, "Le fichier est vide.")
+
+    if extension == "pdf":
+        if not content.startswith(b"%PDF-"):
+            raise HTTPException(400, "Le fichier ne semble pas être un PDF valide.")
+        try:
+            reader = PdfReader(BytesIO(content), strict=False)
+            if len(reader.pages) > MAX_CV_PDF_PAGES:
+                raise HTTPException(413, "Le PDF dépasse la limite de 30 pages.")
+            text = "\n".join(
+                page.extract_text() or ""
+                for page in reader.pages
+            )[:MAX_CV_CHARS]
+        except FileNotDecryptedError as ex:
+            raise HTTPException(400, "Ce PDF est protégé par un mot de passe. Déverrouille-le avant de l'importer.") from ex
+        except PdfReadError as ex:
+            raise HTTPException(400, "Impossible de lire ce PDF. Vérifie que le fichier n'est pas endommagé.") from ex
+    elif extension == "docx":
+        try:
+            with ZipFile(BytesIO(content)) as archive:
+                if sum(member.file_size for member in archive.infolist()) > MAX_CV_BYTES * 4:
+                    raise HTTPException(413, "Le document Word décompressé est trop volumineux.")
+                if "word/document.xml" not in archive.namelist():
+                    raise HTTPException(400, "Le fichier ne semble pas être un document Word valide.")
+            document = Document(BytesIO(content))
+            parts = [paragraph.text for paragraph in document.paragraphs]
+            for table in document.tables:
+                parts.extend(cell.text for row in table.rows for cell in row.cells)
+            text = "\n".join(parts)[:MAX_CV_CHARS]
+        except (BadZipFile, PackageNotFoundError, KeyError, ValueError) as ex:
+            raise HTTPException(400, "Impossible de lire ce document Word. Vérifie que le fichier n'est pas endommagé.") from ex
+    else:
+        try:
+            text = content.decode("utf-8-sig")[:MAX_CV_CHARS]
+        except UnicodeDecodeError as ex:
+            raise HTTPException(400, "Le fichier texte doit être encodé en UTF-8.") from ex
+
+    text = text.strip()
+    if not text:
+        detail = "Aucun texte n'a été extrait du PDF. S'il s'agit d'un document scanné, utilise un PDF avec texte sélectionnable ou un fichier DOCX/TXT."
+        raise HTTPException(422, detail)
+
+    db.execute("insert or replace into kv values(?,?)", ("cv", text))
+    db.commit()
+    return {"ok": True, "cv": text}
 
 
 class Offre(BaseModel):

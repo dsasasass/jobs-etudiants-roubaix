@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Jobs étudiants à Roubaix</title>
+<title>Jobs étudiants </title>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--ink:#14213d;--mute:#5b6478;--line:#d9dde6;--ac:#0b6e6e;--acfg:#fff;--err:#b3261e}
 @media(prefers-color-scheme:dark){:root{--bg:#10151f;--card:#18202e;--ink:#e8ecf4;--mute:#9aa4b8;--line:#2b3548;--ac:#3cb4b0;--acfg:#06201f;--err:#ff8a80}}
@@ -26,7 +26,7 @@ dialog::backdrop{background:#0008}.cols{display:grid;grid-template-columns:1fr 1
 <nav role="tablist"><button data-t="offres" aria-selected="true">Offres</button><button data-t="profil" aria-selected="false">Mon profil</button><button data-t="suivi" aria-selected="false">Candidatures</button></nav>
 <main>
 <section id="offres"><div class="bar"><input id="q" value="étudiant" aria-label="Mots-clés"><select id="d" aria-label="Rayon" style="border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);padding:0 8px"><option value="5">5 km</option><option value="15" selected>15 km</option><option value="30">30 km</option></select><button class="btn" id="go">Rechercher</button></div><div id="liste" class="msg">Lance une recherche pour voir les offres autour de Roubaix.</div></section>
-<section id="profil" hidden><label for="nom">Nom et prénom</label><input id="nom"><label for="cv">Mon CV de référence (texte complet : formation, expériences, compétences, langues)</label><textarea id="cv"></textarea><p><button class="btn" id="save">Enregistrer mon profil</button> <span id="saved" class="msg"></span></p></section>
+<section id="profil" hidden><label for="nom">Nom et prénom</label><input id="nom"><label for="cvfile">Importer un CV de base (PDF, DOCX ou TXT, 5 Mo maximum)</label><input id="cvfile" type="file" accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><p><button class="btn alt" id="importcv">Importer le CV</button> <span id="cvimportstatus" class="msg" role="status" aria-live="polite"></span></p><label for="cv">Mon CV de référence (texte extrait, modifiable)</label><textarea id="cv"></textarea><p><button class="btn" id="save">Enregistrer mon profil</button> <span id="saved" class="msg"></span></p></section>
 <section id="suivi" hidden><div id="tab"></div></section>
 </main>
 <dialog id="dlg"><h2 id="dt" style="margin-top:0"></h2><div id="dstate" class="msg">Adaptation en cours…</div>
@@ -55,5 +55,11 @@ add("Marquer comme postulée",async()=>{await post("/api/candidatures",{offre_id
 catch(e){$("#dstate").className="msg err";$("#dstate").textContent=e.message}}
 async function suivi(){const l=await api("/api/candidatures");$("#tab").innerHTML=l.length?`<table><tr><th>Date</th><th>Offre</th><th>Entreprise</th><th>Statut</th></tr>${l.map(c=>`<tr><td>${c.jour}</td><td>${esc(c.titre)}</td><td>${esc(c.entreprise)}</td><td>${esc(c.statut)}</td></tr>`).join("")}</table>`:'<p class="msg">Aucune candidature pour le moment.</p>'}
 $("#save").onclick=async()=>{await post("/api/profil",{nom:$("#nom").value,cv:$("#cv").value});$("#saved").textContent="Profil enregistré."};
+$("#importcv").onclick=async()=>{const file=$("#cvfile").files[0];if(!file){$("#cvimportstatus").textContent="Choisis d'abord un fichier PDF, DOCX ou TXT.";return}
+const button=$("#importcv"),status=$("#cvimportstatus"),form=new FormData();form.append("file",file);button.disabled=true;status.className="msg";status.textContent="Import et extraction du texte…";
+try{const response=await fetch("/api/profil/cv",{method:"POST",body:form});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||"Erreur "+response.status);
+$("#cv").value=result.cv;$("#saved").textContent="";status.textContent="CV importé et enregistré. Vérifie le texte extrait ci-dessous.";$("#cvfile").value=""}
+catch(error){status.className="msg err";status.textContent=error.message}
+finally{button.disabled=false}};
 api("/api/profil").then(p=>{$("#nom").value=p.nom;$("#cv").value=p.cv});
 </script></body></html>
