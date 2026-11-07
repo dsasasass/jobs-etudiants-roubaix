@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+httpx
+anthropic
+reportlab
+python-dotenv

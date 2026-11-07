@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jobs étudiants à Roubaix</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#14213d;--mute:#5b6478;--line:#d9dde6;--ac:#0b6e6e;--acfg:#fff;--err:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#10151f;--card:#18202e;--ink:#e8ecf4;--mute:#9aa4b8;--line:#2b3548;--ac:#3cb4b0;--acfg:#06201f;--err:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Figtree",system-ui,sans-serif}
+header{padding:28px 20px 8px;max-width:960px;margin:auto}h1{margin:0;font-size:1.9rem;letter-spacing:-.02em}
+header p{margin:4px 0 0;color:var(--mute)}nav{max-width:960px;margin:12px auto;padding:0 20px;display:flex;gap:6px;border-bottom:1px solid var(--line)}
+nav button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 14px;font:inherit;color:var(--mute);cursor:pointer}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--ac);font-weight:600}
+main{max-width:960px;margin:auto;padding:12px 20px 60px}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:9px 11px}
+textarea{min-height:240px;resize:vertical}label{display:block;margin:14px 0 4px;font-weight:600}
+.btn{background:var(--ac);color:var(--acfg);border:0;border-radius:6px;padding:9px 16px;font:inherit;font-weight:600;cursor:pointer}
+.btn.alt{background:none;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.5}
+.bar{display:flex;gap:8px;margin-bottom:14px}.bar input{flex:1}
+.offre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin-bottom:10px;display:flex;gap:14px;justify-content:space-between;align-items:center}
+.offre h3{margin:0;font-size:1.05rem}.offre small{color:var(--mute)}.tag{color:var(--ac);font-weight:600}
+dialog{width:min(860px,94vw);max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:20px}
+dialog::backdrop{background:#0008}.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:700px){.cols{grid-template-columns:1fr}.offre{flex-direction:column;align-items:stretch}}
+.msg{color:var(--mute);padding:20px 0}.msg.err{color:var(--err)}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:9px 6px;border-bottom:1px solid var(--line)}
+</style></head><body>
+<header><h1>Jobs étudiants à Roubaix</h1><p>Trouve une offre, adapte ton CV et ta lettre, puis postule.</p></header>
+<nav role="tablist"><button data-t="offres" aria-selected="true">Offres</button><button data-t="profil" aria-selected="false">Mon profil</button><button data-t="suivi" aria-selected="false">Candidatures</button></nav>
+<main>
+<section id="offres"><div class="bar"><input id="q" value="étudiant" aria-label="Mots-clés"><select id="d" aria-label="Rayon" style="border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);padding:0 8px"><option value="5">5 km</option><option value="15" selected>15 km</option><option value="30">30 km</option></select><button class="btn" id="go">Rechercher</button></div><div id="liste" class="msg">Lance une recherche pour voir les offres autour de Roubaix.</div></section>
+<section id="profil" hidden><label for="nom">Nom et prénom</label><input id="nom"><label for="cv">Mon CV de référence (texte complet : formation, expériences, compétences, langues)</label><textarea id="cv"></textarea><p><button class="btn" id="save">Enregistrer mon profil</button> <span id="saved" class="msg"></span></p></section>
+<section id="suivi" hidden><div id="tab"></div></section>
+</main>
+<dialog id="dlg"><h2 id="dt" style="margin-top:0"></h2><div id="dstate" class="msg">Adaptation en cours…</div>
+<div class="cols" id="dcols" hidden><div><label for="dcv">CV adapté</label><textarea id="dcv"></textarea></div><div><label for="dlt">Lettre de motivation</label><textarea id="dlt"></textarea></div></div>
+<p id="dact" style="display:flex;gap:8px;flex-wrap:wrap" hidden></p><button class="btn alt" onclick="dlg.close()">Fermer</button></dialog>
+<script>
+const $=s=>document.querySelector(s);let OFFRES=[];
+const api=async(u,o)=>{const r=await fetch(u,o);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||"Erreur "+r.status);return j};
+const post=(u,b)=>api(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",x==b));
+["offres","profil","suivi"].forEach(t=>$("#"+t).hidden=t!=b.dataset.t);if(b.dataset.t=="suivi")suivi()});
+async function chercher(){const l=$("#liste");l.className="msg";l.textContent="Recherche…";
+try{OFFRES=await api(`/api/offres?q=${encodeURIComponent($("#q").value)}&distance=${$("#d").value}`);
+if(!OFFRES.length){l.textContent="Aucune offre trouvée. Essaie d'autres mots-clés (serveur, vente, livraison, animateur) ou un rayon plus large.";return}
+l.className="";l.innerHTML=OFFRES.map((o,i)=>`<div class="offre"><div><h3>${esc(o.titre)}</h3><small>${esc(o.entreprise||"Entreprise non précisée")} · ${esc(o.lieu)} · ${esc(o.contrat)} · ${o.date}</small>${o.email?' <small class="tag">candidature par e-mail possible</small>':""}</div><button class="btn" onclick="preparer(${i})">Préparer ma candidature</button></div>`).join("")}
+catch(e){l.className="msg err";l.textContent=e.message}}
+$("#go").onclick=chercher;$("#q").onkeydown=e=>e.key=="Enter"&&chercher();
+async function preparer(i){const o=OFFRES[i];$("#dt").textContent=o.titre+(o.entreprise?" – "+o.entreprise:"");
+$("#dstate").hidden=false;$("#dstate").className="msg";$("#dstate").textContent="Adaptation de ton CV et de la lettre…";$("#dcols").hidden=$("#dact").hidden=true;dlg.showModal();
+try{const r=await post("/api/adapter",{titre:o.titre,entreprise:o.entreprise,description:o.description});
+$("#dcv").value=r.cv;$("#dlt").value=r.lettre;$("#dstate").hidden=false;$("#dstate").textContent="Relis et corrige avant d'envoyer.";$("#dcols").hidden=$("#dact").hidden=false;
+const a=$("#dact");a.innerHTML="";const add=(t,f,alt)=>{const b=document.createElement("button");b.className="btn"+(alt?" alt":"");b.textContent=t;b.onclick=f;a.append(b)};
+if(o.email)add("Envoyer à "+o.email,async e=>{e.target.disabled=true;try{await post("/api/envoyer",{offre_id:o.id,titre:o.titre,entreprise:o.entreprise,email:o.email,cv:$("#dcv").value,lettre:$("#dlt").value});$("#dstate").textContent="Candidature envoyée.";}catch(x){$("#dstate").className="msg err";$("#dstate").textContent=x.message;e.target.disabled=false}});
+if(o.url)add("Ouvrir l'offre pour postuler",()=>window.open(o.url,"_blank"),!!o.email);
+add("Marquer comme postulée",async()=>{await post("/api/candidatures",{offre_id:o.id,titre:o.titre,entreprise:o.entreprise});$("#dstate").textContent="Ajoutée à tes candidatures."},true)}
+catch(e){$("#dstate").className="msg err";$("#dstate").textContent=e.message}}
+async function suivi(){const l=await api("/api/candidatures");$("#tab").innerHTML=l.length?`<table><tr><th>Date</th><th>Offre</th><th>Entreprise</th><th>Statut</th></tr>${l.map(c=>`<tr><td>${c.jour}</td><td>${esc(c.titre)}</td><td>${esc(c.entreprise)}</td><td>${esc(c.statut)}</td></tr>`).join("")}</table>`:'<p class="msg">Aucune candidature pour le moment.</p>'}
+$("#save").onclick=async()=>{await post("/api/profil",{nom:$("#nom").value,cv:$("#cv").value});$("#saved").textContent="Profil enregistré."};
+api("/api/profil").then(p=>{$("#nom").value=p.nom;$("#cv").value=p.cv});
+</script></body></html>
