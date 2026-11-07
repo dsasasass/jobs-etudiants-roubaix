@@ -124,20 +124,21 @@ Offre : {o.titre} chez {o.entreprise}
 Règles : n'invente AUCUNE expérience, diplôme ou compétence absents du CV. Reformule et réordonne le CV pour mettre en avant ce qui correspond à l'offre (une page max).
 Rédige une lettre de motivation courte (150-200 mots), sincère, en français, signée {kv_get('nom')}.
 Réponds uniquement en JSON : {{"cv": "texte du CV adapté", "lettre": "texte de la lettre"}}"""
-    try:
-        response = genai.Client(api_key=api_key).models.generate_content(
-            model=E("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=2500,
-                response_mime_type="application/json",
-            ),
-        )
-    except errors.APIError as ex:
-        raise HTTPException(
-            502,
-            f"Erreur Gemini (HTTP {ex.code}). Vérifie GEMINI_API_KEY, GEMINI_MODEL et le quota de l'API.",
-        ) from ex
+    with genai.Client(api_key=api_key) as client:
+        try:
+            response = client.models.generate_content(
+                model=E("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=2500,
+                    response_mime_type="application/json",
+                ),
+            )
+        except errors.APIError as ex:
+            raise HTTPException(
+                502,
+                f"Erreur Gemini (HTTP {ex.code}). Vérifie GEMINI_API_KEY, GEMINI_MODEL et le quota de l'API.",
+            ) from ex
     if not response.text:
         raise HTTPException(502, "Gemini n'a pas renvoyé de texte. Relance la génération.")
     try:
